@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect } from 'react';
 import './App.css';
 
 import { supabase } from './supabaseClient';
-import { LogIn, LogOut, Send, MessageSquare, ListTodo, CheckCircle, Circle, Trash2, PlusCircle } from 'lucide-react';
+import { LogIn, LogOut, Send, MessageSquare, ListTodo, CheckCircle, Circle, Trash2, PlusCircle, UserPlus } from 'lucide-react';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -65,21 +65,58 @@ function App() {
 }
 
 function SignIn() {
-  const signInWithGoogle = async () => {
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'google',
-    });
-    if (error) console.error('Error signing in:', error.message);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isSignUp, setIsSignUp] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [errorMsg, setErrorMsg] = useState(null);
+
+  const handleAuth = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setErrorMsg(null);
+
+    if (isSignUp) {
+      const { error } = await supabase.auth.signUp({ email, password });
+      if (error) setErrorMsg(error.message);
+      else alert('Check your email for the confirmation link!');
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) setErrorMsg(error.message);
+    }
+    setLoading(false);
   };
 
   return (
     <div className="sign-in-container">
       <div className="card">
-        <h2>Welcome to DevuChat</h2>
-        <p>Connect and stay organized in one place with Supabase.</p>
-        <button className="sign-in-button" onClick={signInWithGoogle}>
-          <LogIn size={20} />
-          Sign in with Google
+        <h2>{isSignUp ? 'Create Account' : 'Welcome Back'}</h2>
+        <p>{isSignUp ? 'Join DevuChat today!' : 'Log in to your account.'}</p>
+        
+        <form onSubmit={handleAuth} className="auth-form">
+          <input 
+            type="email" 
+            placeholder="Email" 
+            value={email} 
+            onChange={(e) => setEmail(e.target.value)} 
+            required 
+          />
+          <input 
+            type="password" 
+            placeholder="Password" 
+            value={password} 
+            onChange={(e) => setPassword(e.target.value)} 
+            required 
+          />
+          {errorMsg && <p className="error-text">{errorMsg}</p>}
+          <button className="sign-in-button" type="submit" disabled={loading}>
+            {loading ? 'Processing...' : (isSignUp ? <UserPlus size={20} /> : <LogIn size={20} />)}
+            {isSignUp ? 'Sign Up' : 'Sign In'}
+          </button>
+        </form>
+
+        <button className="switch-auth-btn" onClick={() => setIsSignUp(!isSignUp)}>
+          {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
         </button>
       </div>
     </div>
@@ -101,7 +138,6 @@ function ChatRoom({ user }) {
   const [formValue, setFormValue] = useState('');
 
   useEffect(() => {
-    // Initial fetch of messages
     const fetchMessages = async () => {
       const { data, error } = await supabase
         .from('messages')
@@ -117,7 +153,6 @@ function ChatRoom({ user }) {
 
     fetchMessages();
 
-    // Subscribe to real-time updates
     const channel = supabase
       .channel('public:messages')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
@@ -142,7 +177,7 @@ function ChatRoom({ user }) {
           text: formValue, 
           uid: user.id, 
           photo_url: user.user_metadata.avatar_url, 
-          display_name: user.user_metadata.full_name 
+          display_name: user.email.split('@')[0] // Use email prefix if display name is missing
         }
       ]);
 
@@ -204,7 +239,6 @@ function TodoList({ user }) {
 
     fetchTodos();
 
-    // Subscribe to to-do changes
     const channel = supabase
       .channel(`public:todos:uid=${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'todos', filter: `uid=eq.${user.id}` }, payload => {
