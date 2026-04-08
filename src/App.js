@@ -2,24 +2,43 @@ import React, { useRef, useState, useEffect } from 'react';
 import './App.css';
 
 import { supabase } from './supabaseClient';
-import { LogIn, LogOut, Send, MessageSquare, ListTodo, CheckCircle, Circle, Trash2, PlusCircle, UserPlus } from 'lucide-react';
+import { LogIn, LogOut, Send, MessageSquare, ListTodo, CheckCircle, Circle, Trash2, PlusCircle, ShieldAlert } from 'lucide-react';
 
 function App() {
   const [user, setUser] = useState(null);
   const [activeTab, setActiveTab] = useState('chat');
+  const [accessDenied, setAccessDenied] = useState(false);
+
+  const ALLOWED_EMAIL = 'fanbyprinciple@gmail.com'; // YOUR GMAIL
 
   useEffect(() => {
-    // Get initial session and subscribe to auth changes
+    // Check for existing session
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
+      validateUser(session?.user);
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+      validateUser(session?.user);
     });
 
     return () => subscription.unsubscribe();
   }, []);
+
+  const validateUser = (user) => {
+    if (user) {
+      if (user.email === ALLOWED_EMAIL) {
+        setUser(user);
+        setAccessDenied(false);
+      } else {
+        // Log out unauthorized users immediately
+        supabase.auth.signOut();
+        setUser(null);
+        setAccessDenied(true);
+      }
+    } else {
+      setUser(null);
+    }
+  };
 
   return (
     <div className="App">
@@ -49,7 +68,12 @@ function App() {
             </nav>
           )}
 
-          {user ? <SignOut /> : null}
+          {user ? (
+            <button className="sign-out-button" onClick={() => supabase.auth.signOut()}>
+              <LogOut size={18} />
+              Sign Out
+            </button>
+          ) : null}
         </div>
       </header>
 
@@ -57,78 +81,43 @@ function App() {
         {user ? (
           activeTab === 'chat' ? <ChatRoom user={user} /> : <TodoList user={user} />
         ) : (
-          <SignIn />
+          <SignIn accessDenied={accessDenied} />
         )}
       </section>
     </div>
   );
 }
 
-function SignIn() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState(null);
-
-  const handleAuth = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setErrorMsg(null);
-
-    if (isSignUp) {
-      const { error } = await supabase.auth.signUp({ email, password });
-      if (error) setErrorMsg(error.message);
-      else alert('Check your email for the confirmation link!');
-    } else {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      if (error) setErrorMsg(error.message);
-    }
-    setLoading(false);
+function SignIn({ accessDenied }) {
+  const signInWithGoogle = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin + '/devuchat'
+      }
+    });
+    if (error) console.error('Error signing in:', error.message);
   };
 
   return (
     <div className="sign-in-container">
       <div className="card">
-        <h2>{isSignUp ? 'Create Account' : 'Welcome Back'}</h2>
-        <p>{isSignUp ? 'Join DevuChat today!' : 'Log in to your account.'}</p>
+        <h2>Private Access</h2>
+        <p>This application is restricted to authorized users only.</p>
         
-        <form onSubmit={handleAuth} className="auth-form">
-          <input 
-            type="email" 
-            placeholder="Email" 
-            value={email} 
-            onChange={(e) => setEmail(e.target.value)} 
-            required 
-          />
-          <input 
-            type="password" 
-            placeholder="Password" 
-            value={password} 
-            onChange={(e) => setPassword(e.target.value)} 
-            required 
-          />
-          {errorMsg && <p className="error-text">{errorMsg}</p>}
-          <button className="sign-in-button" type="submit" disabled={loading}>
-            {loading ? 'Processing...' : (isSignUp ? <UserPlus size={20} /> : <LogIn size={20} />)}
-            {isSignUp ? 'Sign Up' : 'Sign In'}
-          </button>
-        </form>
+        {accessDenied && (
+          <div className="error-banner">
+            <ShieldAlert size={20} />
+            <span>Access Denied: Unauthorized account.</span>
+          </div>
+        )}
 
-        <button className="switch-auth-btn" onClick={() => setIsSignUp(!isSignUp)}>
-          {isSignUp ? 'Already have an account? Sign In' : "Don't have an account? Sign Up"}
+        <button className="sign-in-button google-btn" onClick={signInWithGoogle}>
+          <LogIn size={20} />
+          Sign in with Google
         </button>
       </div>
     </div>
-  );
-}
-
-function SignOut() {
-  return (
-    <button className="sign-out-button" onClick={() => supabase.auth.signOut()}>
-      <LogOut size={18} />
-      Sign Out
-    </button>
   );
 }
 
@@ -147,8 +136,6 @@ function ChatRoom({ user }) {
       
       if (error) console.error('Error fetching messages:', error);
       else setMessages(data || []);
-      
-      dummy.current?.scrollIntoView({ behavior: 'smooth' });
     };
 
     fetchMessages();
@@ -157,7 +144,6 @@ function ChatRoom({ user }) {
       .channel('public:messages')
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
         setMessages(prev => [...prev, payload.new]);
-        dummy.current?.scrollIntoView({ behavior: 'smooth' });
       })
       .subscribe();
 
@@ -165,6 +151,10 @@ function ChatRoom({ user }) {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  useEffect(() => {
+    dummy.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   const sendMessage = async (e) => {
     e.preventDefault();
@@ -176,8 +166,8 @@ function ChatRoom({ user }) {
         { 
           text: formValue, 
           uid: user.id, 
-          photo_url: user.user_metadata.avatar_url, 
-          display_name: user.email.split('@')[0] // Use email prefix if display name is missing
+          display_name: user.user_metadata.full_name || 'Devu',
+          photo_url: user.user_metadata.avatar_url
         }
       ]);
 
@@ -188,7 +178,15 @@ function ChatRoom({ user }) {
   return (
     <div className="chat-container">
       <main>
-        {messages.map(msg => <ChatMessage key={msg.id} message={msg} currentUserUid={user.id} />)}
+        {messages.map(msg => (
+          <div key={msg.id} className={`message ${msg.uid === user.id ? 'sent' : 'received'}`}>
+            <img src={msg.photo_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${msg.uid}`} alt="avatar" />
+            <div className="message-content">
+              <span className="sender-name">{msg.display_name}</span>
+              <p>{msg.text}</p>
+            </div>
+          </div>
+        ))}
         <span ref={dummy}></span>
       </main>
 
@@ -196,27 +194,12 @@ function ChatRoom({ user }) {
         <input 
           value={formValue} 
           onChange={(e) => setFormValue(e.target.value)} 
-          placeholder="Type your message here..." 
+          placeholder="Type your message..." 
         />
         <button type="submit" disabled={!formValue.trim()}>
           <Send size={20} />
         </button>
       </form>
-    </div>
-  );
-}
-
-function ChatMessage({ message, currentUserUid }) {
-  const { text, uid, photo_url, display_name } = message;
-  const messageClass = uid === currentUserUid ? 'sent' : 'received';
-
-  return (
-    <div className={`message ${messageClass}`}>
-      <img src={photo_url || `https://api.dicebear.com/7.x/avataaars/svg?seed=${uid}`} alt={display_name} />
-      <div className="message-content">
-        <span className="sender-name">{display_name}</span>
-        <p>{text}</p>
-      </div>
     </div>
   );
 }
